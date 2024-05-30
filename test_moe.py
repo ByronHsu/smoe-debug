@@ -131,8 +131,7 @@ def assert_verbose_allclose(tensor1, tensor2, rtol=1e-05, atol=1e-08, max_print=
 @pytest.mark.parametrize(
     "dtype, atol, rtol",
     [
-        # (torch.float32, 1e-2, 1e-5),
-        (torch.bfloat16, 1e-2, 1e-5),
+        (torch.float32, 1e-2, 1e-5),
     ],
 )
 def test_correctness(
@@ -155,15 +154,11 @@ def test_correctness(
     #     expert.w3.weight.data = torch.randn_like(expert.w3.weight.data)
 
 
-    # smoe_block = MixtralSparseMoeBlock(config).to("cuda")
     smoe_block = SMoeBlock(config).to("cuda").to(dtype)
 
     smoe_block.copy_weights_from_hf(moe_block)
 
-
     assert_verbose_allclose(moe_block.gate.weight.data, smoe_block.gate.weight.data)
-
-    smoe_block = smoe_block.to("cuda")
     
     _tensor = torch.randn(bsz, seq_len, hidden_size, device="cuda", dtype=dtype)
     x1 = _tensor.clone().requires_grad_(True)
@@ -187,8 +182,8 @@ def test_correctness(
         x_names=["bsz"],
         x_vals=[i for i in range(4, 8, 2)],
         line_arg="provider",
-        line_vals=["liger", "torch"],
-        line_names=["Liger", "PyTorch"],
+        line_vals=["smoe", "torch"],
+        line_names=["Smoe", "PyTorch"],
         styles=[("blue", "-"), ("green", "-")],
         ylabel="time (ms)",
         plot_name=f"moe-full-fp16-speed-benchmark",
@@ -199,8 +194,8 @@ def test_correctness(
         x_names=["bsz"],
         x_vals=[i for i in range(4, 8, 2)],
         line_arg="provider",
-        line_vals=["liger", "torch"],
-        line_names=["Liger", "PyTorch"],
+        line_vals=["smoe", "torch"],
+        line_names=["Smoe", "PyTorch"],
         styles=[("blue", "-"), ("green", "-")],
         ylabel="time (ms)",
         plot_name=f"moe-full-fp32-speed-benchmark",
@@ -211,8 +206,8 @@ def test_correctness(
     #     x_names=["bsz"],
     #     x_vals=[i for i in range(4, 6, 2)],
     #     line_arg="provider",
-    #     line_vals=["liger", "torch"],
-    #     line_names=["Liger", "PyTorch"],
+    #     line_vals=["smoe", "torch"],
+    #     line_names=["Smoe", "PyTorch"],
     #     styles=[("blue", "-"), ("green", "-")],
     #     ylabel="time (ms)",
     #     plot_name=f"moe-fwd-speed-benchmark",
@@ -223,8 +218,8 @@ def test_correctness(
     #     x_names=["bsz"],
     #     x_vals=[i for i in range(4, 6, 2)],
     #     line_arg="provider",
-    #     line_vals=["liger", "torch"],
-    #     line_names=["Liger", "PyTorch"],
+    #     line_vals=["smoe", "torch"],
+    #     line_names=["Smoe", "PyTorch"],
     #     styles=[("blue", "-"), ("green", "-")],
     #     ylabel="time (ms)",
     #     plot_name=f"moe-bwd-speed-benchmark",
@@ -235,8 +230,8 @@ def test_correctness(
     #     x_names=["bsz"],
     #     x_vals=[i for i in range(4, 8, 2)],
     #     line_arg="provider",
-    #     line_vals=["liger", "torch"],
-    #     line_names=["Liger", "PyTorch"],
+    #     line_vals=["smoe", "torch"],
+    #     line_names=["Smoe", "PyTorch"],
     #     styles=[("blue", "-"), ("green", "-")],
     #     ylabel="time (ms)",
     #     plot_name=f"moe-fwd-speed-benchmark",
@@ -247,8 +242,8 @@ def test_correctness(
     #     x_names=["bsz"],
     #     x_vals=[i for i in range(4, 8, 2)],
     #     line_arg="provider",
-    #     line_vals=["liger", "torch"],
-    #     line_names=["Liger", "PyTorch"],
+    #     line_vals=["smoe", "torch"],
+    #     line_names=["Smoe", "PyTorch"],
     #     styles=[("blue", "-"), ("green", "-")],
     #     ylabel="time (ms)",
     #     plot_name=f"moe-full-speed-benchmark",
@@ -259,8 +254,8 @@ def test_correctness(
     #     x_names=["bsz"],
     #     x_vals=[i for i in range(4, 6, 2)],
     #     line_arg="provider",
-    #     line_vals=["liger", "torch"],
-    #     line_names=["Liger", "PyTorch"],
+    #     line_vals=["smoe", "torch"],
+    #     line_names=["Smoe", "PyTorch"],
     #     styles=[("blue", "-"), ("green", "-")],
     #     ylabel="time (ms)",
     #     plot_name=f"moe-full-speed-benchmark",
@@ -281,7 +276,7 @@ def bench_speed_moe(bsz, seq_len, hidden_size, intermediate_size, num_local_expe
 
     if provider == "torch":
         moe_block = MixtralSparseMoeBlock(config).to("cuda").to(dtype)
-    elif provider == "liger":
+    elif provider == "smoe":
         moe_block = SMoeBlock(config).to("cuda").to(dtype)
         # moe_block._reconstruct_experts()
     else:
@@ -334,8 +329,8 @@ def test_bench_speed_moe_wrapper():
         x_names=["bsz"],
         x_vals=[i for i in range(4, 8, 2)],
         line_arg="provider",
-        line_vals=["liger", "torch"],
-        line_names=["Liger", "PyTorch"],
+        line_vals=["smoe", "torch"],
+        line_names=["Smoe", "PyTorch"],
         styles=[("blue", "-"), ("green", "-")],
         ylabel="Memory (MB)",
         plot_name=f"moe-full-memory-benchmark",
@@ -353,7 +348,7 @@ def bench_memory_moe(bsz, seq_len, hidden_size, intermediate_size, num_local_exp
 
     if provider == "torch":
         moe_block = MixtralSparseMoeBlock(config).to("cuda").to(dtype)
-    elif provider == "liger":
+    elif provider == "smoe":
         moe_block = SMoeBlock(config).to("cuda").to(dtype)
         # moe_block._reconstruct_experts()
     else:

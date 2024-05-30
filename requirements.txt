@@ -1,0 +1,4 @@
+triton==2.3.0
+pytorch==2.1.2
+transformers==4.40.1
+pytest==7.1.2

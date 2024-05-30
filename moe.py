@@ -35,7 +35,6 @@ def padded_block_indices(sorted_experts_idxs: torch.Tensor, k: int, N_BLOCK_SIZE
     return expanded_block_idxs, expert_boundaries_end
 
 
-
 @triton.jit
 def _scatter2scatter(
     X_ptr, stride_xm, stride_xk,
@@ -99,6 +98,7 @@ def _scatter2scatter(
         X_blk_ptrs += BLOCK_K * stride_xk
         W_blk_ptrs += BLOCK_K * stride_wk
         # acc += tl.dot(x, w, out_dtype=tl.float32).to(ACC_TYPE)
+        # NOTE: different than ori impl. Directly convert to ACC_TYPE and don't use tf32
         acc += tl.dot(x, w, out_dtype=ACC_TYPE)
 
     Y_blk_ptrs = Y_ptr + (M_out_idx[:, None] * stride_ym + N_block[None, :] * stride_yn)
@@ -190,6 +190,15 @@ def group_bwd_W(DY, X, expert_offsets, E):
 
 
     with torch.cuda.device(DY.device):
+
+        tl_dtype = None
+        if X.dtype == torch.float32:
+            tl_dtype = tl.float32
+        elif X.dtype == torch.float16:
+            tl_dtype = tl.float16
+        elif X.dtype == torch.bfloat16:
+            tl_dtype = tl.bfloat16
+
         _groupXtY[grid](
             # DY_ptr, stride_dym, stride_dyk,
             DY, DY.stride(0), DY.stride(1),
@@ -202,7 +211,7 @@ def group_bwd_W(DY, X, expert_offsets, E):
             # K: tl.constexpr, N: tl.constexpr,
             M=DY.size(0), N=DY.size(-1), K=X.size(-1),
             # ACC_TYPE: tl.constexpr,
-            ACC_TYPE=tl.float32,
+            ACC_TYPE=tl_dtype,
             BLOCK_K=BLOCK_K,
             BLOCK_N=BLOCK_N,
             BLOCK_M=BLOCK_M,
@@ -280,43 +289,6 @@ def _groupXtY(
         acc = acc.to(DW_blk_ptrs.dtype.element_ty)
         tl.store(DW_blk_ptrs, acc, mask=K_mask[:, None] & N_mask[None, :])
 
-
-def _config_grouping():
-    return [
-        triton.Config({'BLOCK_N': 256, 'BLOCK_K': 128}, num_stages=4, num_warps=4),
-        # triton.Config({'BLOCK_N': 128, 'BLOCK_K': 64}, num_stages=4, num_warps=4),
-        # triton.Config({'BLOCK_N': 64, 'BLOCK_K': 32}, num_stages=4, num_warps=4),
-    ]
-
-def group(A, sorted_expert_idxs, coeff=None, fan_out=1, out=None):
-    N = sorted_expert_idxs.size(0)
-    K = A.size(1)
-    assert A.size(0) * fan_out == N
-    if out is not None:
-        Y = out
-    else:
-        Y = torch.empty((N, K), dtype=A.dtype, device=A.device)
-        # print("grp init:", Y.size())
-    def grid(META):
-        grid_num = (triton.cdiv(META['N'], META['BLOCK_N']),)
-        return grid_num
-    with torch.cuda.device(A.device):
-        _group[grid](
-            # A_ptr, stride_an, stride_ai,
-            A, A.stride(0), A.stride(1), coeff is not None, coeff, fan_out,
-            # Y_ptr, stride_yn, stride_yk,
-            Y, Y.stride(0), Y.stride(1),
-            # grouped_idx_ptr,
-            sorted_expert_idxs,
-            # N: tl.constexpr, K: tl.constexpr,
-            N, K
-        )
-        return Y
-
-@triton.autotune(configs=_config_grouping(), key=['K'])
-@triton.heuristics({
-    "NO_K_MASK": lambda args: (args['K'] % args['BLOCK_K']) == 0
-})
 @triton.jit
 def _group(
     src_ptr, stride_sn, stride_sk, has_coeff: tl.constexpr, coeff_ptr, FAN_OUT: tl.constexpr,
@@ -358,6 +330,40 @@ def _group(
             tl.store(tgt_blk_ptrs, block, mask=mask)
         src_blk_ptrs += BLOCK_K * stride_sk
         tgt_blk_ptrs += BLOCK_K * stride_ti
+
+
+
+def group(A, sorted_expert_idxs, coeff=None, fan_out=1, out=None):
+    N = sorted_expert_idxs.size(0)
+    K = A.size(1)
+
+    BLOCK_N, BLOCK_K = 256, 128
+    NO_K_MASK = (K % BLOCK_K == 0)
+
+    assert A.size(0) * fan_out == N
+    if out is not None:
+        Y = out
+    else:
+        Y = torch.empty((N, K), dtype=A.dtype, device=A.device)
+        # print("grp init:", Y.size())
+    def grid(META):
+        grid_num = (triton.cdiv(META['N'], META['BLOCK_N']),)
+        return grid_num
+    with torch.cuda.device(A.device):
+        _group[grid](
+            # A_ptr, stride_an, stride_ai,
+            A, A.stride(0), A.stride(1), coeff is not None, coeff, fan_out,
+            # Y_ptr, stride_yn, stride_yk,
+            Y, Y.stride(0), Y.stride(1),
+            # grouped_idx_ptr,
+            sorted_expert_idxs,
+            # N: tl.constexpr, K: tl.constexpr,
+            N, K,
+            BLOCK_N=BLOCK_N,
+            BLOCK_K=BLOCK_K,
+            NO_K_MASK=NO_K_MASK
+        )
+        return Y
 
 
 class ParallelLinear(torch.autograd.Function):
