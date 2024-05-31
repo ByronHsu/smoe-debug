@@ -1,3 +1,8 @@
+## Reference
+
+Paper: https://arxiv.org/pdf/2403.08245
+Repo: https://github.com/shawntan/scattermoe
+
 ## Versions & Environments
 
 1. Pip: please see [requirements.txt](./requirements.txt)
