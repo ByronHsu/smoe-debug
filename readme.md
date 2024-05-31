@@ -1,7 +1,7 @@
 ## Reference
 
-Paper: https://arxiv.org/pdf/2403.08245
-Repo: https://github.com/shawntan/scattermoe
+- Paper: https://arxiv.org/pdf/2403.08245
+- Repo: https://github.com/shawntan/scattermoe
 
 ## Versions & Environments
 
