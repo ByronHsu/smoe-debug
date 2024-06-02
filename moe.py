@@ -35,6 +35,47 @@ def padded_block_indices(sorted_experts_idxs: torch.Tensor, k: int, N_BLOCK_SIZE
     return expanded_block_idxs, expert_boundaries_end
 
 
+def get_autotune_config():
+    return [
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 256, 'BLOCK_K': 64}, num_stages=3,
+                      num_warps=8),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 256, 'BLOCK_K': 32}, num_stages=4,
+                      num_warps=4),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'BLOCK_K': 32}, num_stages=4,
+                      num_warps=4),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'BLOCK_K': 32}, num_stages=4,
+                      num_warps=4),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 128, 'BLOCK_K': 32}, num_stages=4,
+                      num_warps=4),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 32, 'BLOCK_K': 32}, num_stages=4,
+                      num_warps=4),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 32, 'BLOCK_K': 32}, num_stages=5,
+                      num_warps=2),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 64, 'BLOCK_K': 32}, num_stages=5,
+                      num_warps=2),
+        # Good config for fp8 inputs.
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 256, 'BLOCK_K': 128}, num_stages=3,
+                      num_warps=8),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'BLOCK_K': 128}, num_stages=3,
+                      num_warps=8),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'BLOCK_K': 128}, num_stages=4,
+                      num_warps=4),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 256, 'BLOCK_K': 128}, num_stages=4,
+                      num_warps=4),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'BLOCK_K': 128}, num_stages=4,
+                      num_warps=4),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'BLOCK_K': 64}, num_stages=4,
+                      num_warps=4),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 128, 'BLOCK_K': 64}, num_stages=4,
+                      num_warps=4),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 32, 'BLOCK_K': 64}, num_stages=4,
+                      num_warps=4)
+    ]
+
+@triton.autotune(
+    configs=get_autotune_config(),
+    key=['M', 'N', 'K', 'E'],
+)
 @triton.jit
 def _scatter2scatter(
     X_ptr, stride_xm, stride_xk,
@@ -82,7 +123,7 @@ def _scatter2scatter(
     X_blk_ptrs = X_ptr + M_in_idx[:, None] * stride_xm + K_block[None, :] * stride_xk
     W_blk_ptrs = W_ptr + K_block[:, None] * stride_wk + N_block[None, :] * stride_wn + E_idx * stride_we
 
-    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=ACC_TYPE)
+    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32) # ACC_TYPE)
     iters = tl.cdiv(K, BLOCK_K)
     for K_block_id in range(0, iters):
         if NO_K_MASK:
@@ -99,7 +140,7 @@ def _scatter2scatter(
         W_blk_ptrs += BLOCK_K * stride_wk
         # acc += tl.dot(x, w, out_dtype=tl.float32).to(ACC_TYPE)
         # NOTE: different than ori impl. Directly convert to ACC_TYPE and don't use tf32
-        acc += tl.dot(x, w, out_dtype=ACC_TYPE)
+        acc = tl.dot(x, w, acc)
 
     Y_blk_ptrs = Y_ptr + (M_out_idx[:, None] * stride_ym + N_block[None, :] * stride_yn)
     tl.store(Y_blk_ptrs, acc, mask=E_mask[:, None] & N_mask[None, :])
@@ -155,17 +196,17 @@ def scatter2scatter(X, W, sorted_expert_idxs, sorted_scattered_idxs, k,
             M=X.size(0),
             K=X.size(1),
             N=O.size(1), E=W.size(0),
-            BLOCK_M=BLOCK_M,
             ACC_TYPE=tl_dtype,
             OUT_M=O.size(0),
             # allow_tf32=False,
             x_grouped=x_grouped, y_grouped=y_grouped,
-            BLOCK_N=BLOCK_N,
-            BLOCK_K=BLOCK_K,
-            num_stages=4,
-            num_warps=32,
-            NO_N_MASK=(N % BLOCK_N) == 0,
-            NO_K_MASK=(K % BLOCK_K) == 0
+            # BLOCK_M=BLOCK_M,
+            # BLOCK_N=BLOCK_N,
+            # BLOCK_K=BLOCK_K,
+            # num_stages=4,
+            # num_warps=4,
+            NO_N_MASK=((N % BLOCK_N) == 0),
+            NO_K_MASK=((K % BLOCK_K) == 0)
         )
     return O
 
